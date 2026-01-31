@@ -6,6 +6,29 @@ const XP_PER_RECIPE = 20;
 const XP_PER_LEVEL = 120;
 const META_RECIPES = 10;
 
+/* ===================== FIT (estimativas seguras) ===================== */
+/**
+ * IMPORTANTE:
+ * - Isso é um planner educativo (front-end).
+ * - Não é prescrição médica/nutricional.
+ * - Resultados variam MUITO por pessoa. Procure um profissional, principalmente se você for menor de idade
+ *   ou tiver condições de saúde.
+ */
+const FIT_RATES = {
+  lose: {
+    // kg/semana (faixas conservadoras)
+    conservative: 0.25,
+    standard: 0.5,
+    aggressive: 0.75,
+  },
+  gain: {
+    // kg/semana (ganho saudável costuma ser mais lento)
+    conservative: 0.1,
+    standard: 0.2,
+    aggressive: 0.25,
+  },
+};
+
 const RANKS = [
   { minLevel: 1, name: "Aprendiz", icon: "🥄" },
   { minLevel: 3, name: "Cozinheiro", icon: "🍳" },
@@ -23,7 +46,7 @@ const EMBLEMS = [
 ];
 
 /* ===================== STORAGE ===================== */
-const STORAGE_KEY = "cozinha_do_chef_front_v3";
+const STORAGE_KEY = "cozinha_do_chef_front_v4";
 
 function safeParse(json, fallback) {
   try {
@@ -32,7 +55,6 @@ function safeParse(json, fallback) {
     return fallback;
   }
 }
-
 function saveStorage(data) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -42,7 +64,6 @@ function saveStorage(data) {
     return false;
   }
 }
-
 function loadStorage() {
   const raw = localStorage.getItem(STORAGE_KEY);
   return raw ? safeParse(raw, null) : null;
@@ -69,7 +90,7 @@ function weekdayPtShort(iso) {
   return map[dt.getDay()];
 }
 
-/* ===================== MOCK API (troca por fetch depois) ===================== */
+/* ===================== MOCK API ===================== */
 const mockApi = (() => {
   const users = [
     { id: 1, email: "teste@teste.com", password: "123456", name: "Felipe" },
@@ -177,19 +198,19 @@ const mockApi = (() => {
   ];
 
   const state = {
-    authedUser: null, // { id, name, phone, email }
+    authedUser: null,
     favorites: new Set(),
-    ratings: new Map(), // recipeId -> {stars, loved}
+    ratings: new Map(),
     userRecipes: [],
     customIngredients: new Set(),
     progress: { xp: 0, recipesMade: 0, madeRecipeIds: new Set() },
     profile: { emblemId: "e1" },
 
-    // Calendar
-    calendar: new Map(), // key "YYYY-MM-DD|HH:MM" -> {date,time,recipeId}
+    // Calendar: key "YYYY-MM-DD|HH:MM" -> {date,time,recipeId}
+    calendar: new Map(),
 
-    // Rotina Fit
-    fit: new Map(), // date -> true (alimentou bem)
+    // Fit: saved plan
+    fitPlan: null, // {startDate, weight, goal, pace, weeklyRateKg, targetChangeKg, projected[]}
   };
 
   function persist() {
@@ -206,7 +227,7 @@ const mockApi = (() => {
       },
       profile: state.profile,
       calendar: [...state.calendar.entries()],
-      fit: [...state.fit.entries()],
+      fitPlan: state.fitPlan,
     };
     saveStorage(data);
   }
@@ -233,19 +254,17 @@ const mockApi = (() => {
     state.calendar = new Map(
       Array.isArray(saved.calendar) ? saved.calendar : [],
     );
-    state.fit = new Map(Array.isArray(saved.fit) ? saved.fit : []);
+    state.fitPlan = saved.fitPlan || null;
   }
 
   hydrateFromStorage();
 
-  function delay(ms = 160) {
+  function delay(ms = 120) {
     return new Promise((r) => setTimeout(r, ms));
   }
-
   function allRecipes() {
     return [...recipesBase, ...state.userRecipes];
   }
-
   function normalizeMethod(m) {
     const x = String(m || "").trim();
     return x || "Airfryer";
@@ -263,10 +282,7 @@ const mockApi = (() => {
       if (!nm) throw new Error("Digite seu nome.");
       if (!ph) throw new Error("Digite seu número.");
 
-      // Mantém o usuário teste funcionando (login real do mock)
       const isTest = users.some((u) => u.email === e && u.password === p);
-
-      // Modo demo sem backend: email+senha minimamente válidos
       const basicOk = e.includes("@") && p.length >= 4;
 
       if (!isTest && !basicOk) throw new Error("Email ou senha inválidos.");
@@ -277,7 +293,6 @@ const mockApi = (() => {
         phone: ph,
         email: e,
       };
-
       persist();
       return state.authedUser;
     },
@@ -286,7 +301,6 @@ const mockApi = (() => {
       state.authedUser = null;
       persist();
     },
-
     me() {
       return state.authedUser;
     },
@@ -314,18 +328,19 @@ const mockApi = (() => {
       const r = allRecipes().find((x) => x.id === recipeId);
       if (!r) throw new Error("Receita não encontrada.");
 
-      const userState = {
-        isFavorite: state.favorites.has(recipeId),
-        rating: state.ratings.get(recipeId) || null,
-        isUserRecipe: r.owner === "user",
-        isMade: state.progress.madeRecipeIds.has(recipeId),
+      return {
+        recipe: r,
+        userState: {
+          isFavorite: state.favorites.has(recipeId),
+          rating: state.ratings.get(recipeId) || null,
+          isUserRecipe: r.owner === "user",
+          isMade: state.progress.madeRecipeIds.has(recipeId),
+        },
       };
-
-      return { recipe: r, userState };
     },
 
     async toggleFavorite(recipeId) {
-      await delay(90);
+      await delay(70);
       if (state.favorites.has(recipeId)) state.favorites.delete(recipeId);
       else state.favorites.add(recipeId);
       persist();
@@ -345,7 +360,7 @@ const mockApi = (() => {
     },
 
     async addUserRecipe(payload) {
-      await delay(140);
+      await delay(110);
 
       const title = String(payload.title || "").trim();
       if (!title) throw new Error("Dê um nome para a receita.");
@@ -375,7 +390,7 @@ const mockApi = (() => {
 
       state.userRecipes.push({
         id,
-        trackId: 1, // por enquanto entra na trilha Airfryer
+        trackId: 1,
         title,
         description: String(payload.description || "").trim(),
         imageUrl,
@@ -394,7 +409,7 @@ const mockApi = (() => {
     },
 
     async setRating(recipeId, stars) {
-      await delay(90);
+      await delay(70);
       const prev = state.ratings.get(recipeId) || { stars: null, loved: false };
       state.ratings.set(recipeId, { ...prev, stars });
       persist();
@@ -402,7 +417,7 @@ const mockApi = (() => {
     },
 
     async setLoved(recipeId) {
-      await delay(90);
+      await delay(70);
       const prev = state.ratings.get(recipeId) || { stars: null, loved: false };
       state.ratings.set(recipeId, { ...prev, loved: true });
       persist();
@@ -420,7 +435,7 @@ const mockApi = (() => {
     },
 
     async addIngredient(name) {
-      await delay(70);
+      await delay(50);
       const n = String(name || "")
         .trim()
         .toLowerCase();
@@ -431,12 +446,11 @@ const mockApi = (() => {
     },
 
     async recipesByIngredients(names) {
-      await delay(160);
+      await delay(120);
       const have = new Set(
         names.map((n) => n.toLowerCase().trim()).filter(Boolean),
       );
       if (have.size === 0) return [];
-
       return allRecipes().filter((r) => {
         const req = r.ingredients.map((x) => x.name.toLowerCase());
         return req.length > 0 && req.every((x) => have.has(x));
@@ -444,7 +458,7 @@ const mockApi = (() => {
     },
 
     async markRecipeMade(recipeId) {
-      await delay(90);
+      await delay(70);
       if (!state.progress.madeRecipeIds.has(recipeId)) {
         state.progress.madeRecipeIds.add(recipeId);
         state.progress.recipesMade += 1;
@@ -481,7 +495,6 @@ const mockApi = (() => {
         emblemId: state.profile.emblemId || "e1",
       };
     },
-
     equipEmblem(emblemId) {
       state.profile.emblemId = emblemId;
       persist();
@@ -489,15 +502,13 @@ const mockApi = (() => {
 
     // ======= Calendar =======
     async calendarUpsert({ date, time, recipeId }) {
-      await delay(70);
+      await delay(60);
       const d = String(date || "").trim();
       const t = String(time || "").trim();
       const rid = Number(recipeId);
-
       if (!d) throw new Error("Escolha a data.");
       if (!t) throw new Error("Escolha a hora.");
       if (!rid) throw new Error("Escolha uma receita.");
-
       const key = `${d}|${t}`;
       state.calendar.set(key, { date: d, time: t, recipeId: rid });
       persist();
@@ -505,7 +516,7 @@ const mockApi = (() => {
     },
 
     async calendarRemove({ date, time }) {
-      await delay(60);
+      await delay(50);
       const key = `${date}|${time}`;
       state.calendar.delete(key);
       persist();
@@ -513,38 +524,58 @@ const mockApi = (() => {
     },
 
     async calendarListByDate(date) {
-      await delay(70);
+      await delay(60);
       const d = String(date || "").trim();
       const items = [];
-      for (const v of state.calendar.values()) {
-        if (v.date === d) items.push(v);
-      }
+      for (const v of state.calendar.values()) if (v.date === d) items.push(v);
       items.sort((a, b) => a.time.localeCompare(b.time));
       return items;
     },
 
-    // ======= Rotina Fit =======
-    async fitMarkToday() {
-      await delay(70);
-      const d = todayISO();
-      if (state.fit.has(d)) return { already: true };
-      state.fit.set(d, true);
-      persist();
-      return { already: false };
+    // ======= Fit Planner =======
+    fitGetPlan() {
+      return state.fitPlan;
     },
 
-    fitHasToday() {
-      return state.fit.has(todayISO());
-    },
+    fitStartPlan({ weightKg, goal, pace }) {
+      const w = Number(weightKg);
+      if (!w || w <= 0) throw new Error("Digite um peso válido (kg).");
+      const g = goal === "gain" ? "gain" : "lose";
+      const p = ["conservative", "standard", "aggressive"].includes(pace)
+        ? pace
+        : "standard";
 
-    fitGetWeek(endIso = todayISO()) {
-      // últimos 7 dias incluindo endIso
-      const days = [];
-      for (let i = 6; i >= 0; i--) {
-        const d = addDaysISO(endIso, -i);
-        days.push({ date: d, good: !!state.fit.get(d) });
+      const rate = FIT_RATES[g][p]; // kg por semana
+      const weeks = 4;
+      const targetChangeKg = rate * weeks * (g === "lose" ? -1 : 1);
+
+      // projeção diária (30 dias)
+      const days = 30;
+      const dailyDelta = targetChangeKg / days;
+      const startDate = todayISO();
+      const projected = [];
+      for (let i = 0; i < days; i++) {
+        const date = addDaysISO(startDate, i);
+        const val = w + dailyDelta * i;
+        projected.push({ date, weight: Math.round(val * 10) / 10 });
       }
-      return days;
+
+      state.fitPlan = {
+        startDate,
+        weightKg: w,
+        goal: g,
+        pace: p,
+        weeklyRateKg: rate,
+        targetChangeKg: Math.round(targetChangeKg * 10) / 10,
+        projected,
+      };
+      persist();
+      return state.fitPlan;
+    },
+
+    fitReset() {
+      state.fitPlan = null;
+      persist();
     },
   };
 })();
@@ -556,7 +587,6 @@ function toast(msg, type = "ok") {
   toastEl.classList.add(type === "ok" ? "ok" : "bad");
   setTimeout(() => toastEl.classList.add("hidden"), 2400);
 }
-
 function escapeHtml(s) {
   return String(s).replace(
     /[&<>"']/g,
@@ -570,13 +600,11 @@ function escapeHtml(s) {
       })[c],
   );
 }
-
 function route() {
   const hash = location.hash || "#/login";
   const [_, base, id] = hash.split("/");
   return { base: base || "login", id };
 }
-
 function setHash(h) {
   location.hash = h;
 }
@@ -584,13 +612,11 @@ function setHash(h) {
 function getLevelFromXp(xp) {
   return Math.max(1, Math.floor(xp / XP_PER_LEVEL) + 1);
 }
-
 function getRank(level) {
   let best = RANKS[0];
   for (const r of RANKS) if (level >= r.minLevel) best = r;
   return best;
 }
-
 function getEmblemById(id) {
   return EMBLEMS.find((e) => e.id === id) || EMBLEMS[0];
 }
@@ -611,7 +637,7 @@ function layout(contentHtml) {
 
         <div class="nav">
           <a href="#/calendar">Calendário</a>
-          <a href="#/fit">Rotina Fit</a>
+          <a href="#/fit">Fit</a>
           <a href="#/contact">Contato</a>
           <a href="#/feedback">Feedback</a>
           <a href="#/favorites">Minhas receitas</a>
@@ -676,24 +702,23 @@ async function render() {
   if (r.base === "recipe") return renderRecipe(Number(r.id));
   if (r.base === "favorites") return renderFavorites();
   if (r.base === "ingredients") return renderIngredients();
+  if (r.base === "calendar") return renderCalendar();
+  if (r.base === "fit") return renderFit();
   if (r.base === "feedback") return renderFeedback();
   if (r.base === "contact") return renderContact();
   if (r.base === "settings") return renderSettings();
-  if (r.base === "calendar") return renderCalendar();
-  if (r.base === "fit") return renderFit();
 
   setHash("#/home");
 }
 
-/* ===================== LOGIN (sem cadastro) ===================== */
+/* ===================== LOGIN ===================== */
 function renderLogin() {
   appEl.innerHTML = `
     <div class="form-wrap card">
       <h1>Entrar</h1>
       <p>
         Bem-vindo(a) à <b>Cozinha do Chef</b> 🍲<br/>
-        Trilhas organizadas, receitas práticas e evolução por XP: cada receita feita te dá pontos,
-        sobe de nível e libera emblemas no seu perfil.
+        Trilhas organizadas, receitas práticas e evolução por XP.
       </p>
 
       <div class="row">
@@ -723,7 +748,7 @@ function renderLogin() {
       </div>
 
       <p class="small-muted" style="margin-top:12px;">
-        *Sem cadastro aqui por enquanto. (Quando ligar o backend, vira login real.)
+        Dica: usuário teste: <b>teste@teste.com</b> / <b>123456</b>
       </p>
     </div>
   `;
@@ -744,14 +769,13 @@ function renderLogin() {
   };
 }
 
-/* ===================== HOME (imagem maior + textinho abaixo) ===================== */
+/* ===================== HOME ===================== */
 async function renderHome() {
   const heroImg =
     "https://images.unsplash.com/photo-1495521821757-a1efb6729352?auto=format&fit=crop&w=1400&q=60";
 
   try {
     const tracks = await mockApi.getTracks();
-
     const prog = mockApi.getProgress();
     const level = getLevelFromXp(prog.xp);
     const rank = getRank(level);
@@ -787,7 +811,7 @@ async function renderHome() {
             Trilhas organizadas, receitas claras e um sistema de evolução por XP.
             Marque receitas como <b>feitas</b>, suba de nível e equipe emblemas no seu perfil.
             <br/><br/>
-            Comece agora pela trilha de <b>Airfryer</b> (já liberada) e acompanhe suas metas abaixo.
+            Use o <b>Calendário</b> para planejar receitas por horário e a aba <b>Fit</b> para acompanhar sua meta do mês.
           </p>
 
           <div class="divider"></div>
@@ -826,12 +850,10 @@ async function renderHome() {
         <div class="hero-media card">
           <img src="${heroImg}" alt="Cozinha" />
           <div class="hero-caption">
-            <div class="small-muted">Dica rápida</div>
-            <div style="font-weight:700; margin-top:4px;">
-              Use o Calendário para planejar suas receitas por horário.
-            </div>
+            <div class="small-muted">Atalho</div>
+            <div style="font-weight:700; margin-top:4px;">Planeje sua semana em 2 minutos:</div>
             <div class="small-muted" style="margin-top:6px;">
-              E na Rotina Fit você marca 1x por dia se comeu bem e vê o gráfico semanal.
+              1) Selecione receitas → 2) Agenda por horário no Calendário → 3) Marque “feito” pra ganhar XP.
             </div>
           </div>
         </div>
@@ -898,7 +920,7 @@ async function renderTrack(trackId) {
   }
 }
 
-/* ===================== RECEITA (feito dá XP) ===================== */
+/* ===================== RECEITA ===================== */
 async function renderRecipe(recipeId) {
   try {
     const { recipe, userState } = await mockApi.getRecipe(recipeId);
@@ -906,11 +928,7 @@ async function renderRecipe(recipeId) {
     const ingHtml = (recipe.ingredients || [])
       .map(
         (i) =>
-          `<li>${escapeHtml(i.name)} ${
-            i.qty
-              ? `<span class="small-muted">• ${escapeHtml(i.qty)}</span>`
-              : ""
-          }</li>`,
+          `<li>${escapeHtml(i.name)} ${i.qty ? `<span class="small-muted">• ${escapeHtml(i.qty)}</span>` : ""}</li>`,
       )
       .join("");
 
@@ -1067,7 +1085,7 @@ async function renderRecipe(recipeId) {
   }
 }
 
-/* ===================== MINHAS RECEITAS (upload + método + temperatura + ingredientes por input) ===================== */
+/* ===================== MINHAS RECEITAS (ingredientes: CAIXA DE DIGITAR) ===================== */
 async function renderFavorites() {
   try {
     const favorites = await mockApi.getFavorites();
@@ -1087,7 +1105,7 @@ async function renderFavorites() {
       <div class="card hero">
         <h1 style="margin:0 0 8px; font-size:18px;">Adicionar receita</h1>
         <p style="margin:0; color:var(--muted);">
-          Faça upload da foto (salva localmente), escolha o método e temperatura.
+          Faça upload da foto, escolha método e temperatura. Ingredientes: digite separados por vírgula.
         </p>
 
         <div class="divider"></div>
@@ -1209,6 +1227,7 @@ Sirva..."></textarea>
         const prepTimeRaw = document.getElementById("arTime").value;
         const servingsRaw = document.getElementById("arServ").value;
 
+        // ✅ ingredientes por caixa de digitar
         const ingStr = document.getElementById("arIngs").value.trim();
         const ingredients = ingStr
           .split(",")
@@ -1271,7 +1290,7 @@ Sirva..."></textarea>
   }
 }
 
-/* ===================== INGREDIENTES (selecionáveis + busca por seleção) ===================== */
+/* ===================== INGREDIENTES (SELECIONÁVEL DE VERDADE) ===================== */
 async function renderIngredients() {
   try {
     const ingredients = await mockApi.getAllIngredients();
@@ -1284,8 +1303,8 @@ async function renderIngredients() {
 
       <div class="card hero">
         <p style="margin:0; color:var(--muted);">
-          Adicione ingredientes, selecione o que você tem em casa e clique em <b>Buscar receitas</b>.
-          A pesquisa usa exatamente os ingredientes selecionados.
+          Selecione os ingredientes (clicando nos chips) e clique em <b>Buscar receitas</b>.
+          A busca retorna receitas em que você tem <b>todos</b> os ingredientes.
         </p>
 
         <div class="divider"></div>
@@ -1296,7 +1315,7 @@ async function renderIngredients() {
             <input id="newIng" placeholder="Ex: queijo, tomate..." />
           </div>
           <div class="field" style="align-self:end;">
-            <button class="btn primary" id="btnAddIng">Adicionar ingrediente</button>
+            <button class="btn primary" id="btnAddIng">Adicionar</button>
           </div>
         </div>
 
@@ -1338,9 +1357,10 @@ async function renderIngredients() {
         : ingredients;
 
       chipsEl.innerHTML = "";
-      list.slice(0, 260).forEach((i) => {
+      list.slice(0, 300).forEach((i) => {
         const on = selected.has(i.name);
 
+        // ✅ botão simples: clique alterna seleção (sem checkbox)
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "chip" + (on ? " on" : "");
@@ -1412,220 +1432,7 @@ async function renderIngredients() {
   }
 }
 
-/* ===================== FEEDBACK (mailto) ===================== */
-function renderFeedback() {
-  const emailTo = "nexacode.apps@gmail.com";
-  const me = mockApi.me();
-
-  appEl.innerHTML = layout(`
-    <div class="section-title">
-      <h2>Feedback da página</h2>
-      <a class="btn small" href="#/home">← Home</a>
-    </div>
-
-    <div class="card hero">
-      <p style="margin:0; color:var(--muted);">
-        Ao clicar em enviar, será aberto um email pronto para <b>${emailTo}</b>.
-      </p>
-
-      <div class="divider"></div>
-
-      <div class="field">
-        <label>Mensagem</label>
-        <textarea id="fbMsg" placeholder="Ex: queria mais receitas de airfryer, filtros, etc..."></textarea>
-      </div>
-
-      <div class="actions">
-        <button class="btn primary" id="btnSendFb">Enviar por email</button>
-      </div>
-
-      <div class="small-muted" style="margin-top:10px;">
-        *Sem backend, o envio direto depende do seu app de email (mailto).
-      </div>
-    </div>
-  `);
-
-  bindLogout();
-
-  document.getElementById("btnSendFb").onclick = () => {
-    const message = document.getElementById("fbMsg").value.trim();
-    if (!message) return toast("Digite uma mensagem.", "bad");
-
-    const subject = encodeURIComponent("Feedback • Cozinha do Chef");
-    const body = encodeURIComponent(
-      `Nome: ${me?.name || "-"}\n` +
-        `Número: ${me?.phone || "-"}\n` +
-        `Email (login): ${me?.email || "-"}\n\n` +
-        `Mensagem:\n${message}\n`,
-    );
-
-    window.location.href = `mailto:${emailTo}?subject=${subject}&body=${body}`;
-    toast("Abrindo seu email…", "ok");
-  };
-}
-
-/* ===================== CONTATO ===================== */
-function renderContact() {
-  const phone = "14998577898";
-  const phoneIntl = "5514998577898";
-  const email = "nexacode.apps@gmail.com";
-
-  appEl.innerHTML = layout(`
-    <div class="section-title">
-      <h2>Contato</h2>
-      <a class="btn small" href="#/home">← Home</a>
-    </div>
-
-    <div class="card hero">
-      <h1 style="margin:0 0 10px;">Quem somos</h1>
-      <p style="margin:0; color:var(--muted);">
-        A <b>Cozinha do Chef</b> organiza receitas em trilhas e facilita a prática no dia a dia — com favoritos,
-        avaliação e busca por ingredientes. O projeto é desenvolvido pela <b>NexaCode</b>.
-      </p>
-
-      <div class="divider"></div>
-
-      <div class="panel">
-        <p style="margin:0;">📱 WhatsApp: <b>${phone}</b></p>
-        <p style="margin:8px 0 0;">📩 Email: <b>${email}</b></p>
-
-        <div class="actions">
-          <a class="btn primary" href="https://wa.me/${phoneIntl}" target="_blank" rel="noopener">
-            Falar no WhatsApp
-          </a>
-          <a class="btn" href="mailto:${email}">
-            Enviar email
-          </a>
-        </div>
-      </div>
-    </div>
-  `);
-
-  bindLogout();
-}
-
-/* ===================== CONFIGURAÇÕES (perfil + patentes + emblemas) ===================== */
-function renderSettings() {
-  const me = mockApi.me();
-  const prog = mockApi.getProgress();
-  const level = getLevelFromXp(prog.xp);
-  const rank = getRank(level);
-
-  const xpInLevel = prog.xp % XP_PER_LEVEL;
-  const pct = Math.min(100, Math.round((xpInLevel / XP_PER_LEVEL) * 100));
-
-  const profile = mockApi.getProfile();
-  const equipped = getEmblemById(profile.emblemId);
-
-  appEl.innerHTML = layout(`
-    <div class="section-title">
-      <h2>Configurações</h2>
-      <a class="btn small" href="#/home">← Home</a>
-    </div>
-
-    <div class="card hero">
-      <h1 style="margin:0 0 10px; font-size:18px;">Editar perfil</h1>
-
-      <div class="row">
-        <div class="field">
-          <label>Nome</label>
-          <input id="pfName" value="${escapeHtml(me?.name || "")}" />
-        </div>
-        <div class="field">
-          <label>Número</label>
-          <input id="pfPhone" value="${escapeHtml(me?.phone || "")}" />
-        </div>
-      </div>
-
-      <div class="field">
-        <label>Email (login)</label>
-        <input id="pfEmail" value="${escapeHtml(me?.email || "")}" />
-      </div>
-
-      <div class="actions">
-        <button class="btn primary" id="btnSaveProfile">Salvar</button>
-      </div>
-
-      <div class="divider"></div>
-
-      <h1 style="margin:0 0 10px; font-size:18px;">Patentes e níveis</h1>
-      <div class="kpi">
-        <div class="box">
-          <div class="t">Patente atual</div>
-          <div class="v">${escapeHtml(rank.icon)} ${escapeHtml(rank.name)}</div>
-          <div class="small-muted">Nível ${level}</div>
-        </div>
-        <div class="box">
-          <div class="t">XP total</div>
-          <div class="v">${prog.xp}</div>
-          <div class="small-muted">${xpInLevel}/${XP_PER_LEVEL} para o próximo nível</div>
-        </div>
-        <div class="box">
-          <div class="t">Receitas feitas</div>
-          <div class="v">${prog.recipesMade}</div>
-          <div class="small-muted">+${XP_PER_RECIPE} XP por receita</div>
-        </div>
-      </div>
-
-      <div style="margin-top:12px;">
-        <div class="small-muted">Progresso do nível</div>
-        <div class="progress"><div style="width:${pct}%"></div></div>
-      </div>
-
-      <div class="divider"></div>
-
-      <h1 style="margin:0 0 10px; font-size:18px;">Emblemas</h1>
-      <p style="margin:0; color:var(--muted);">
-        Emblema equipado: <b>${escapeHtml(equipped.icon)} ${escapeHtml(equipped.name)}</b>
-      </p>
-
-      <div class="emblems" id="emblems"></div>
-
-      <div class="divider"></div>
-
-      <p style="margin:0; color:var(--muted);">
-        Como subir de nível: marque receitas como <b>feitas</b>. Cada receita feita dá <b>${XP_PER_RECIPE} XP</b>.
-      </p>
-    </div>
-  `);
-
-  bindLogout();
-
-  document.getElementById("btnSaveProfile").onclick = () => {
-    const name = document.getElementById("pfName").value.trim();
-    const phone = document.getElementById("pfPhone").value.trim();
-    const email = document.getElementById("pfEmail").value.trim();
-    mockApi.updateProfile({ name, phone, email });
-    toast("Perfil atualizado!", "ok");
-    renderSettings();
-  };
-
-  const emblemsEl = document.getElementById("emblems");
-  emblemsEl.innerHTML = "";
-
-  EMBLEMS.forEach((em) => {
-    const locked = level < em.unlockLevel;
-    const on = profile.emblemId === em.id;
-
-    const btn = document.createElement("div");
-    btn.className = "emblem" + (locked ? " locked" : "") + (on ? " on" : "");
-    btn.innerHTML = `
-      <div style="font-weight:700;">${escapeHtml(em.icon)} ${escapeHtml(em.name)}</div>
-      <div class="small-muted">Desbloqueia no nível ${em.unlockLevel}${locked ? " (bloqueado)" : ""}</div>
-    `;
-
-    btn.onclick = () => {
-      if (locked) return toast("Esse emblema ainda está bloqueado.", "bad");
-      mockApi.equipEmblem(em.id);
-      toast("Emblema equipado!", "ok");
-      renderSettings();
-    };
-
-    emblemsEl.appendChild(btn);
-  });
-}
-
-/* ===================== CALENDÁRIO (receitas por hora do dia) ===================== */
+/* ===================== CALENDÁRIO (receitas por qualquer horário) ===================== */
 async function renderCalendar() {
   const all = mockApi.listAllRecipes();
   const d0 = todayISO();
@@ -1638,7 +1445,7 @@ async function renderCalendar() {
 
     <div class="card hero">
       <p style="margin:0; color:var(--muted);">
-        Planeje suas receitas por horário. Você pode escolher qualquer receita do site ou as que você cadastrou.
+        Escolha uma data e qualquer horário, selecione uma receita (do site ou sua) e adicione.
       </p>
 
       <div class="divider"></div>
@@ -1657,9 +1464,6 @@ async function renderCalendar() {
       <div class="field">
         <label>Receita</label>
         <select id="calRecipe"></select>
-        <div class="small-muted" style="margin-top:6px;">
-          *Se você adicionar algo no mesmo horário, ele substitui a receita daquele horário.
-        </div>
       </div>
 
       <div class="actions">
@@ -1679,7 +1483,6 @@ async function renderCalendar() {
 
   bindLogout();
 
-  // popular select de receitas
   const sel = document.getElementById("calRecipe");
   sel.innerHTML = all
     .slice()
@@ -1762,145 +1565,439 @@ async function renderCalendar() {
   refreshList();
 }
 
-/* ===================== ROTINA FIT (1 marca por dia + gráfico semanal) ===================== */
-async function renderFit() {
-  const today = todayISO();
+/* ===================== FIT (peso + meta + plano do mês + gráficos) ===================== */
+function renderFit() {
+  const plan = mockApi.fitGetPlan();
 
   appEl.innerHTML = layout(`
     <div class="section-title">
-      <h2>Rotina Fit</h2>
+      <h2>Fit • Plano do mês</h2>
       <a class="btn small" href="#/home">← Home</a>
     </div>
 
     <div class="card hero">
       <p style="margin:0; color:var(--muted);">
-        Marque <b>1 vez por dia</b> se você se alimentou bem. Com isso, geramos um gráfico da semana.
+        Isso é um planner educativo (não substitui nutricionista/médico). Você define peso e meta, e o app
+        gera um plano-base do mês + estimativas e gráficos.
       </p>
 
       <div class="divider"></div>
 
-      <div class="kpi">
-        <div class="box">
-          <div class="t">Hoje</div>
-          <div class="v">${escapeHtml(today)}</div>
-          <div class="small-muted">${weekdayPtShort(today)}</div>
+      <div class="row">
+        <div class="field">
+          <label>Peso atual (kg)</label>
+          <input id="fitWeight" type="number" step="0.1" placeholder="Ex: 78.5" value="${plan ? plan.weightKg : ""}" />
         </div>
-        <div class="box">
-          <div class="t">Status de hoje</div>
-          <div class="v" id="fitStatus">—</div>
-          <div class="small-muted">Você só pode marcar 1x por dia</div>
+        <div class="field">
+          <label>Meta</label>
+          <select id="fitGoal">
+            <option value="lose" ${plan?.goal === "lose" ? "selected" : ""}>Emagrecer</option>
+            <option value="gain" ${plan?.goal === "gain" ? "selected" : ""}>Ganhar massa</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Ritmo (estimativa segura)</label>
+          <select id="fitPace">
+            <option value="conservative" ${plan?.pace === "conservative" ? "selected" : ""}>Conservador</option>
+            <option value="standard" ${plan?.pace === "standard" ? "selected" : ""}>Padrão</option>
+            <option value="aggressive" ${plan?.pace === "aggressive" ? "selected" : ""}>Intenso</option>
+          </select>
         </div>
       </div>
 
       <div class="actions">
-        <button class="btn primary" id="btnFitMark">Marcar: me alimentei bem ✅</button>
+        <button class="btn primary" id="btnFitStart">Começar</button>
+        <button class="btn" id="btnFitReset">Resetar</button>
       </div>
     </div>
 
     <div class="section-title">
-      <h2>Desempenho da semana</h2>
+      <h2>Resultado</h2>
     </div>
 
-    <div class="card hero">
-      <canvas id="fitChart" height="220" style="width:100%; display:block;"></canvas>
-      <div class="small-muted" id="fitSummary" style="margin-top:10px;">—</div>
+    <div class="card hero" id="fitResult">
+      ${
+        plan
+          ? `
+        <div class="kpi">
+          <div class="box">
+            <div class="t">Início</div>
+            <div class="v">${escapeHtml(plan.startDate)}</div>
+            <div class="small-muted">${weekdayPtShort(plan.startDate)}</div>
+          </div>
+          <div class="box">
+            <div class="t">Meta</div>
+            <div class="v">${plan.goal === "lose" ? "⬇️ Emagrecer" : "⬆️ Ganhar massa"}</div>
+            <div class="small-muted">Ritmo: ${escapeHtml(plan.pace)}</div>
+          </div>
+          <div class="box">
+            <div class="t">Estimativa no mês</div>
+            <div class="v">${plan.targetChangeKg > 0 ? "+" : ""}${plan.targetChangeKg} kg</div>
+            <div class="small-muted">${Math.round(plan.weeklyRateKg * 10) / 10} kg/semana</div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <h1 style="margin:0 0 10px; font-size:18px;">Plano-base de alimentação (mês)</h1>
+        <p style="margin:0; color:var(--muted);">
+          Use isso como guia simples. Ajuste por preferência e saúde. Se tiver restrições, procure profissional.
+        </p>
+
+        <div class="panel" style="margin-top:10px;">
+          <div style="font-weight:700;">Estrutura diária (modelo prato):</div>
+          <ul class="list" style="margin-top:8px;">
+            <li><b>Café da manhã:</b> 1 proteína + 1 carbo bom + 1 fruta (ex: ovos + aveia + banana)</li>
+            <li><b>Almoço:</b> 1/2 prato de legumes + 1 proteína + 1 porção de carbo (arroz/mandioca/batata) + água</li>
+            <li><b>Lanche:</b> iogurte/queijo + fruta ou castanhas (porção pequena)</li>
+            <li><b>Jantar:</b> parecido com almoço, mas com carbo menor (ou sopa + proteína)</li>
+          </ul>
+
+          <div class="divider"></div>
+
+          <div style="font-weight:700;">Foco da meta:</div>
+          <ul class="list" style="margin-top:8px;">
+            ${
+              plan.goal === "lose"
+                ? `
+              <li>Priorize: proteína em todas as refeições, vegetais e água.</li>
+              <li>Evite: líquidos calóricos (refrigerante/suco), excesso de doce e beliscos.</li>
+              <li>Consistência > perfeição: 80% do mês bem feito já muda tudo.</li>
+            `
+                : `
+              <li>Priorize: proteína + carbo em pelo menos 2 refeições fortes.</li>
+              <li>Inclua: lanches com proteína (iogurte, ovos, frango desfiado, whey se usar).</li>
+              <li>Treino de força + sono bom = ganho de massa melhor.</li>
+            `
+            }
+          </ul>
+        </div>
+
+        <div class="divider"></div>
+
+        <h1 style="margin:0 0 10px; font-size:18px;">Gráfico de projeção (30 dias)</h1>
+        <canvas id="fitChartLine" height="220" style="width:100%; display:block;"></canvas>
+        <div class="small-muted" id="fitSummary" style="margin-top:10px;"></div>
+      `
+          : `
+        <p style="margin:0; color:var(--muted);">
+          Preencha seu peso e escolha a meta para gerar o plano do mês + gráficos.
+        </p>
+      `
+      }
     </div>
   `);
 
   bindLogout();
 
-  const statusEl = document.getElementById("fitStatus");
-  const btn = document.getElementById("btnFitMark");
+  const btnStart = document.getElementById("btnFitStart");
+  const btnReset = document.getElementById("btnFitReset");
 
-  function setTodayStatus() {
-    const marked = mockApi.fitHasToday();
-    statusEl.textContent = marked ? "✅ Marcado" : "⏳ Não marcado";
-    btn.disabled = marked;
-    btn.className = marked ? "btn" : "btn primary";
-  }
-
-  function drawChart() {
-    const data = mockApi.fitGetWeek(today); // 7 dias
-    const goodCount = data.reduce((acc, d) => acc + (d.good ? 1 : 0), 0);
-
-    const canvas = document.getElementById("fitChart");
-    const ctx = canvas.getContext("2d");
-
-    // Ajusta largura real do canvas para ficar nítido
-    const cssW = canvas.getBoundingClientRect().width;
-    const cssH = canvas.getBoundingClientRect().height;
-    const ratio = window.devicePixelRatio || 1;
-    canvas.width = Math.floor(cssW * ratio);
-    canvas.height = Math.floor(cssH * ratio);
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-
-    // Fundo transparente (vai usar o fundo do card)
-    ctx.clearRect(0, 0, cssW, cssH);
-
-    // Layout
-    const pad = 18;
-    const w = cssW - pad * 2;
-    const h = cssH - pad * 2;
-    const baseY = pad + h;
-
-    // Eixo base
-    ctx.globalAlpha = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(pad, baseY);
-    ctx.lineTo(pad + w, baseY);
-    ctx.strokeStyle = "rgba(255,255,255,0.20)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // Barras
-    const barW = w / 7;
-    for (let i = 0; i < 7; i++) {
-      const x = pad + i * barW;
-      const val = data[i].good ? 1 : 0;
-
-      const bh = val ? h * 0.75 : h * 0.12;
-      const y = baseY - bh;
-
-      // barra
-      ctx.globalAlpha = 0.9;
-      ctx.fillStyle = val ? "rgba(76,201,240,0.55)" : "rgba(255,255,255,0.10)";
-      ctx.fillRect(x + 8, y, barW - 16, bh);
-
-      // label dia
-      ctx.globalAlpha = 0.75;
-      ctx.fillStyle = "rgba(255,255,255,0.75)";
-      ctx.font = "12px Poppins, sans-serif";
-      const label = weekdayPtShort(data[i].date);
-      ctx.fillText(label, x + 10, baseY + 14);
-
-      // ponto ✅
-      if (val) {
-        ctx.globalAlpha = 1;
-        ctx.font = "14px Poppins, sans-serif";
-        ctx.fillText("✅", x + 12, y - 6);
-      }
+  btnStart.onclick = () => {
+    try {
+      const weight = document.getElementById("fitWeight").value;
+      const goal = document.getElementById("fitGoal").value;
+      const pace = document.getElementById("fitPace").value;
+      mockApi.fitStartPlan({ weightKg: weight, goal, pace });
+      toast("Plano gerado!", "ok");
+      renderFit();
+    } catch (e) {
+      toast(e.message, "bad");
     }
-
-    const pct = Math.round((goodCount / 7) * 100);
-    document.getElementById("fitSummary").textContent =
-      `Semana: ${goodCount}/7 dias marcados (${pct}%).`;
-  }
-
-  btn.onclick = async () => {
-    const r = await mockApi.fitMarkToday();
-    if (r.already) toast("Você já marcou hoje.", "ok");
-    else toast("Boa! Dia marcado ✅", "ok");
-    setTodayStatus();
-    drawChart();
   };
 
-  setTodayStatus();
-  drawChart();
+  btnReset.onclick = () => {
+    mockApi.fitReset();
+    toast("Fit resetado.", "ok");
+    renderFit();
+  };
 
-  // Redesenha ao mudar tamanho da janela
-  window.addEventListener("resize", () => {
-    // evita redesenho em rota diferente
-    if (route().base === "fit") drawChart();
+  // desenhar gráfico se existir plano
+  const newPlan = mockApi.fitGetPlan();
+  if (newPlan) {
+    drawFitLineChart(newPlan);
+  }
+}
+
+function drawFitLineChart(plan) {
+  const canvas = document.getElementById("fitChartLine");
+  const summaryEl = document.getElementById("fitSummary");
+  if (!canvas) return;
+
+  const ctx = canvas.getContext("2d");
+
+  // Canvas nítido
+  const cssW = canvas.getBoundingClientRect().width;
+  const cssH = canvas.getBoundingClientRect().height;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(cssW * ratio);
+  canvas.height = Math.floor(cssH * ratio);
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const pad = 18;
+  const w = cssW - pad * 2;
+  const h = cssH - pad * 2;
+
+  const pts = plan.projected;
+  const weights = pts.map((p) => p.weight);
+  const minW = Math.min(...weights);
+  const maxW = Math.max(...weights);
+
+  // evita divisão por zero
+  const range = Math.max(0.1, maxW - minW);
+
+  function xAt(i) {
+    return pad + (i / (pts.length - 1)) * w;
+  }
+  function yAt(val) {
+    const t = (val - minW) / range; // 0..1
+    return pad + (1 - t) * h;
+  }
+
+  // eixo base
+  ctx.globalAlpha = 0.7;
+  ctx.strokeStyle = "rgba(255,255,255,0.20)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, pad + h);
+  ctx.lineTo(pad + w, pad + h);
+  ctx.stroke();
+
+  // linha
+  ctx.globalAlpha = 0.95;
+  ctx.strokeStyle = "rgba(76,201,240,0.75)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  pts.forEach((p, i) => {
+    const x = xAt(i);
+    const y = yAt(p.weight);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // pontos (a cada 7 dias)
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "rgba(255,255,255,0.75)";
+  ctx.font = "12px Poppins, sans-serif";
+  for (let i = 0; i < pts.length; i += 7) {
+    const x = xAt(i);
+    const y = yAt(pts[i].weight);
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillText(`${pts[i].weight}kg`, x + 6, y - 6);
+  }
+
+  const start = pts[0].weight;
+  const end = pts[pts.length - 1].weight;
+  const delta = Math.round((end - start) * 10) / 10;
+
+  summaryEl.textContent =
+    `Estimativa: ${start}kg → ${end}kg (${delta > 0 ? "+" : ""}${delta}kg em ~30 dias). ` +
+    `Isso é apenas uma projeção e varia de pessoa pra pessoa.`;
+
+  window.addEventListener(
+    "resize",
+    () => {
+      if (route().base === "fit") drawFitLineChart(plan);
+    },
+    { once: true },
+  );
+}
+
+/* ===================== FEEDBACK/CONTATO/SETTINGS (simples) ===================== */
+function renderFeedback() {
+  const emailTo = "nexacode.apps@gmail.com";
+  const me = mockApi.me();
+
+  appEl.innerHTML = layout(`
+    <div class="section-title">
+      <h2>Feedback</h2>
+      <a class="btn small" href="#/home">← Home</a>
+    </div>
+
+    <div class="card hero">
+      <div class="field">
+        <label>Mensagem</label>
+        <textarea id="fbMsg" placeholder="Escreva seu feedback..."></textarea>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="btnSendFb">Enviar por email</button>
+      </div>
+      <div class="small-muted">Sem backend: abre seu app de email (mailto).</div>
+    </div>
+  `);
+
+  bindLogout();
+
+  document.getElementById("btnSendFb").onclick = () => {
+    const message = document.getElementById("fbMsg").value.trim();
+    if (!message) return toast("Digite uma mensagem.", "bad");
+
+    const subject = encodeURIComponent("Feedback • Cozinha do Chef");
+    const body = encodeURIComponent(
+      `Nome: ${me?.name || "-"}\n` +
+        `Número: ${me?.phone || "-"}\n` +
+        `Email (login): ${me?.email || "-"}\n\n` +
+        `Mensagem:\n${message}\n`,
+    );
+
+    window.location.href = `mailto:${emailTo}?subject=${subject}&body=${body}`;
+    toast("Abrindo seu email…", "ok");
+  };
+}
+
+function renderContact() {
+  const phone = "14998577898";
+  const phoneIntl = "5514998577898";
+  const email = "nexacode.apps@gmail.com";
+
+  appEl.innerHTML = layout(`
+    <div class="section-title">
+      <h2>Contato</h2>
+      <a class="btn small" href="#/home">← Home</a>
+    </div>
+
+    <div class="card hero">
+      <h1 style="margin:0 0 10px;">Quem somos</h1>
+      <p style="margin:0; color:var(--muted);">
+        A <b>Cozinha do Chef</b> organiza receitas em trilhas e facilita a prática no dia a dia — com favoritos,
+        avaliação e busca por ingredientes. Projeto desenvolvido pela <b>NexaCode</b>.
+      </p>
+
+      <div class="divider"></div>
+
+      <div class="panel">
+        <p style="margin:0;">📱 WhatsApp: <b>${phone}</b></p>
+        <p style="margin:8px 0 0;">📩 Email: <b>${email}</b></p>
+
+        <div class="actions">
+          <a class="btn primary" href="https://wa.me/${phoneIntl}" target="_blank" rel="noopener">
+            Falar no WhatsApp
+          </a>
+          <a class="btn" href="mailto:${email}">
+            Enviar email
+          </a>
+        </div>
+      </div>
+    </div>
+  `);
+
+  bindLogout();
+}
+
+function renderSettings() {
+  const me = mockApi.me();
+  const prog = mockApi.getProgress();
+  const level = getLevelFromXp(prog.xp);
+  const rank = getRank(level);
+
+  const xpInLevel = prog.xp % XP_PER_LEVEL;
+  const pct = Math.min(100, Math.round((xpInLevel / XP_PER_LEVEL) * 100));
+
+  const profile = mockApi.getProfile();
+  const equipped = getEmblemById(profile.emblemId);
+
+  appEl.innerHTML = layout(`
+    <div class="section-title">
+      <h2>Configurações</h2>
+      <a class="btn small" href="#/home">← Home</a>
+    </div>
+
+    <div class="card hero">
+      <h1 style="margin:0 0 10px; font-size:18px;">Editar perfil</h1>
+
+      <div class="row">
+        <div class="field">
+          <label>Nome</label>
+          <input id="pfName" value="${escapeHtml(me?.name || "")}" />
+        </div>
+        <div class="field">
+          <label>Número</label>
+          <input id="pfPhone" value="${escapeHtml(me?.phone || "")}" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Email (login)</label>
+        <input id="pfEmail" value="${escapeHtml(me?.email || "")}" />
+      </div>
+
+      <div class="actions">
+        <button class="btn primary" id="btnSaveProfile">Salvar</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <h1 style="margin:0 0 10px; font-size:18px;">Patentes e níveis</h1>
+      <div class="kpi">
+        <div class="box">
+          <div class="t">Patente atual</div>
+          <div class="v">${escapeHtml(rank.icon)} ${escapeHtml(rank.name)}</div>
+          <div class="small-muted">Nível ${level}</div>
+        </div>
+        <div class="box">
+          <div class="t">XP total</div>
+          <div class="v">${prog.xp}</div>
+          <div class="small-muted">${xpInLevel}/${XP_PER_LEVEL} para o próximo nível</div>
+        </div>
+        <div class="box">
+          <div class="t">Receitas feitas</div>
+          <div class="v">${prog.recipesMade}</div>
+          <div class="small-muted">+${XP_PER_RECIPE} XP por receita</div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <div class="small-muted">Progresso do nível</div>
+        <div class="progress"><div style="width:${pct}%"></div></div>
+      </div>
+
+      <div class="divider"></div>
+
+      <h1 style="margin:0 0 10px; font-size:18px;">Emblemas</h1>
+      <p style="margin:0; color:var(--muted);">
+        Emblema equipado: <b>${escapeHtml(equipped.icon)} ${escapeHtml(equipped.name)}</b>
+      </p>
+
+      <div class="emblems" id="emblems"></div>
+    </div>
+  `);
+
+  bindLogout();
+
+  document.getElementById("btnSaveProfile").onclick = () => {
+    const name = document.getElementById("pfName").value.trim();
+    const phone = document.getElementById("pfPhone").value.trim();
+    const email = document.getElementById("pfEmail").value.trim();
+    mockApi.updateProfile({ name, phone, email });
+    toast("Perfil atualizado!", "ok");
+    renderSettings();
+  };
+
+  const emblemsEl = document.getElementById("emblems");
+  emblemsEl.innerHTML = "";
+  EMBLEMS.forEach((em) => {
+    const locked = level < em.unlockLevel;
+    const on = profile.emblemId === em.id;
+
+    const btn = document.createElement("div");
+    btn.className = "emblem" + (locked ? " locked" : "") + (on ? " on" : "");
+    btn.innerHTML = `
+      <div style="font-weight:700;">${escapeHtml(em.icon)} ${escapeHtml(em.name)}</div>
+      <div class="small-muted">Desbloqueia no nível ${em.unlockLevel}${locked ? " (bloqueado)" : ""}</div>
+    `;
+
+    btn.onclick = () => {
+      if (locked) return toast("Esse emblema ainda está bloqueado.", "bad");
+      mockApi.equipEmblem(em.id);
+      toast("Emblema equipado!", "ok");
+      renderSettings();
+    };
+    emblemsEl.appendChild(btn);
   });
 }
 
