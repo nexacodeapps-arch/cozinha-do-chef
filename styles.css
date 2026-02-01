@@ -837,3 +837,130 @@ select option:hover {
   background: #111a2e;
   color: #ffffff;
 }
+
+/* ===== MOBILE NAV / DRAWER ===== */
+
+.nav-toggle {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(238, 243, 255, 0.92);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.nav-toggle:active {
+  transform: scale(0.98);
+}
+
+.nav-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: none;
+  z-index: 9998;
+}
+
+.nav-drawer {
+  position: fixed;
+  top: 0;
+  right: -320px;
+  width: 320px;
+  max-width: 88vw;
+  height: 100vh;
+  background: rgba(10, 16, 32, 0.92);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: -20px 0 60px rgba(0, 0, 0, 0.45);
+  z-index: 9999;
+  transition: right 0.22s ease;
+  padding: 16px;
+}
+
+.nav-drawer.open {
+  right: 0;
+}
+.nav-overlay.open {
+  display: block;
+}
+
+.drawer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.drawer-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 900;
+}
+
+.drawer-close {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(238, 243, 255, 0.92);
+  border-radius: 14px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.drawer-links {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drawer-links a {
+  text-decoration: none;
+  color: rgba(238, 243, 255, 0.92);
+  padding: 12px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 800;
+}
+
+.drawer-links a:active {
+  transform: scale(0.99);
+}
+
+.drawer-links a.btn-accent {
+  border-color: rgba(255, 122, 24, 0.35);
+  background: rgba(255, 122, 24, 0.12);
+}
+
+.drawer-links .danger {
+  background: rgba(255, 70, 70, 0.12);
+  border-color: rgba(255, 70, 70, 0.25);
+}
+
+/* Desktop mantém nav normal */
+@media (max-width: 860px) {
+  .topbar .nav {
+    display: none;
+  } /* esconde nav tradicional */
+  .nav-toggle {
+    display: flex;
+  } /* mostra botão menu */
+}
+
+/* melhora espaçamento no mobile */
+@media (max-width: 540px) {
+  .container {
+    padding: 14px;
+  }
+  .brand span {
+    display: none;
+  } /* opcional: deixa só 🍲 + marca curta */
+}
