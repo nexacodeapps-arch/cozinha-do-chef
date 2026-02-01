@@ -713,3 +713,52 @@ select:focus {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.02);
 }
+
+/* Deixa controles nativos coerentes no tema escuro */
+:root {
+  color-scheme: dark;
+}
+
+/* Select bonito no tema */
+select {
+  width: 100%;
+  color: var(--text, #eef3ff);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  padding: 12px 14px;
+  outline: none;
+}
+
+/* Foco */
+select:focus {
+  border-color: rgba(255, 122, 24, 0.75);
+  box-shadow: 0 0 0 3px rgba(255, 122, 24, 0.18);
+}
+
+/* A PARTE IMPORTANTE:
+   quando abre a lista, garante texto escuro em fundo claro (legível). */
+select option {
+  color: #0b1220 !important;
+  background: #ffffff !important;
+}
+
+/* Se você usa dark dropdown e seu navegador permitir, pode trocar pra:
+select option { color:#eef3ff!important; background:#0b1220!important; }
+*/
+
+/* Também ajuda inputs/textarea/placeholder ficarem legíveis */
+input,
+textarea {
+  color: var(--text, #eef3ff);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  padding: 12px 14px;
+  outline: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: rgba(238, 243, 255, 0.55);
+}
